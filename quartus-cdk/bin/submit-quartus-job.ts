@@ -1,6 +1,6 @@
-import * as AWS from 'aws-sdk';
+import { BatchClient, SubmitJobCommand, SubmitJobCommandInput } from "@aws-sdk/client-batch";
 
-const batch = new AWS.Batch();
+const batchClient = new BatchClient({ region: 'ap-southeast-2' });
 
 async function submitQuartusBuildJob(jobName: string, projectPath: string) {
   const params = {
@@ -18,7 +18,8 @@ async function submitQuartusBuildJob(jobName: string, projectPath: string) {
   };
 
   try {
-    const response = await batch.submitJob(params).promise();
+    const command = new SubmitJobCommand(params);
+    const response = await batchClient.send(command);
     console.log(`Job submitted successfully. Job ID: ${response.jobId}`);
     return response.jobId;
   } catch (error) {
