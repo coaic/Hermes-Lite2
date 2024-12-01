@@ -3,11 +3,18 @@ import * as batch from 'aws-cdk-lib/aws-batch';
 import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as ecr from 'aws-cdk-lib/aws-ecr';
+import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
+
 
 export class QuartusBatchStack extends cdk.Stack {
   constructor(scope: cdk.App, id: string, props?: cdk.StackProps) {
-    super(scope, id, props);
-
+    super(scope, id, {
+      ...props,
+      synthesizer: new cdk.DefaultStackSynthesizer({
+        qualifier: 'quartus',
+        bootstrapStackVersionSsmParameter: '/cdk-bootstrap/quartus/version',
+      })
+    });
     // Create VPC
     const vpc = new ec2.Vpc(this, 'BatchVPC', {
       maxAzs: 2,
@@ -56,10 +63,22 @@ export class QuartusBatchStack extends cdk.Stack {
       repositoryName: 'docker-hub/intel/quartuspro-v24.1'
     });
 
+    // Get Docker Hub credentials from Secrets Manager
+    const dockerHubSecret = secretsmanager.Secret.fromSecretNameV2(this, 'DockerHubSecret', 'ecr-pullthroughcache/docker-hub');
+
     // Create an ECR Pull Through Cache
     const ecrPullThroughCache = new ecr.CfnPullThroughCacheRule(this, 'ECRPullThroughCache', {
-      ecrRepositoryPrefix: 'docker-hub',
-      upstreamRegistryUrl: 'registry-1.docker.io'
+        ecrRepositoryPrefix: 'docker-hub',
+        upstreamRegistryUrl: 'registry-1.docker.io',
+        credentialArn: dockerHubSecret.secretArn
+    });
+
+    // Create Spot Fleet Role
+    const spotFleetRole = new iam.Role(this, 'SpotFleetRole', {
+      assumedBy: new iam.ServicePrincipal('spotfleet.amazonaws.com'),
+      managedPolicies: [
+        iam.ManagedPolicy.fromAwsManagedPolicyName('service-role/AmazonEC2SpotFleetTaggingRole')
+      ]
     });
 
     // Create Instance Role
@@ -82,7 +101,7 @@ export class QuartusBatchStack extends cdk.Stack {
         maxvCpus: 16,
         minvCpus: 0,
         desiredvCpus: 0,
-        spotIamFleetRole: 'arn:aws:iam::${this.account}:role/aws-service-role/spot.amazonaws.com/AWSServiceRoleForEC2Spot',
+        spotIamFleetRole: spotFleetRole.roleArn,  // Use the created role
         instanceRole: instanceProfile.attrArn,
         instanceTypes: ['c5.large', 'c5.xlarge', 'c5.2xlarge'],
         subnets: vpc.privateSubnets.map(subnet => subnet.subnetId),
